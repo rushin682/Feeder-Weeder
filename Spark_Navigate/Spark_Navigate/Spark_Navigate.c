@@ -5,18 +5,19 @@
  *  Author: Eastways Travel
  */ 
 
-//#define F_CPU 14745600
+#define F_CPU 7372800UL
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <util/delay.h>
-
 #include <math.h> //included to support power function
+
 //#include "buzzer.h"
 #include "lcd.c"
 
 
 #include "Line_Follow.c"
 #include "POS.c"
+#include "IR_Embed.c"
 
 #define STOPS 7 
 
@@ -121,11 +122,11 @@ void stop (void)
 
 //Function used for moving robot forward by specified distance
 
-void linear_distance_mm(unsigned int DistanceInMM)
+void linear_distance_mm(unsigned int DistanceInMM, int sign, char purpose)
 {
 	float ReqdShaftCount = 0;
-	unsigned long int ReqdShaftCountInt = 0;
-
+	unsigned long int ReqdShaftCountInt = 0, pendingShaftCount = 0;
+	int plant_trigger;
 	ReqdShaftCount = DistanceInMM / 12.92; // division by resolution to get shaft count
 	ReqdShaftCountInt = (unsigned long int) ReqdShaftCount;
 	
@@ -133,9 +134,25 @@ void linear_distance_mm(unsigned int DistanceInMM)
 	while(1)
 	{		
 		readSensor();
-		proportional();
-		forward();
+		proportional();		
+		if(sign > 0){forward();}
+		else if(sign < 0){ back();}		
 		velocity(baseLine-p,baseLine+p);
+		plant_trigger = plantDetect();
+		if(plant_trigger == 1){
+			stop();
+			pendingShaftCount = ReqdShaftCountInt - ShaftCountRight;
+			if(purpose == 'S'){ 				
+				colourDetect();
+				timer1_init();
+			}
+			else if(purpose == 'W'){
+				stop();
+				buzzer_on();
+				_delay_ms(3000);
+				//servoAction();				
+			} 
+		}
 		if(ShaftCountRight > ReqdShaftCountInt)
 		{
 			break; 
@@ -177,16 +194,15 @@ void proportional()
 	}
 }
 
-void forward_mm(unsigned int DistanceInMM)
+void forward_mm(unsigned int DistanceInMM, char purpose)
 {
 	
-	linear_distance_mm(DistanceInMM);
+	linear_distance_mm(DistanceInMM, 1, purpose);
 }
 
-void back_mm(unsigned int DistanceInMM)
-{\
-	back();
-	linear_distance_mm(DistanceInMM);
+void back_mm(unsigned int DistanceInMM, char purpose)
+{
+	linear_distance_mm(DistanceInMM, -1, purpose);
 }
 
 void left_degrees(unsigned int Degrees)
@@ -318,7 +334,7 @@ void vertical_motion(){
 	direction = face;	
 	vertical = abs(vertical);
 	//lcd_print(1,3, vertical, 3);
-	forward_mm(vertical * 340);
+	forward_mm(vertical * 340, 'S');
 }
 void horizontal_motion(){
 	
@@ -331,11 +347,11 @@ void horizontal_motion(){
 	rotate(face);
 	direction = face;
 	horizontal = abs(horizontal);
-	forward_mm(horizontal * 340);
+	forward_mm(horizontal * 340, 'S');
 }
 
 
-void navigate(int nodes){
+void scan(int nodes){
 	for(int i=0;i<2;i++){	
 		if(x_D == 1){
 			face = 'S';
@@ -347,7 +363,7 @@ void navigate(int nodes){
 		}
 		rotate(face);
 		direction = face;
-		forward_mm((nodes-1) * 340);
+		forward_mm(((nodes-1) * 340), 'S');
 		//right_degrees(180);
 	}
 	
@@ -412,7 +428,7 @@ int main(void)
 		//_delay_ms(500);
 		
 		
-		navigate(STOPS);	
+		scan(STOPS);	
 		stop();
 		
 		
