@@ -444,9 +444,9 @@ int main(void)
 	
 	//Enter the co-ordinates of the initial positions of all the three bots.
 	//Fx,Fy for Firebird | Sbx,Sby for Spark blue | Srx,Sry for Spark Red
-		int x_F = 3;
-		int y_F = 'C';
-		char dir_F = 'E';
+		int x_F = 5;
+		int y_F = 'D';
+		char dir_F = 'N';
 	
 	
 		
