@@ -8,36 +8,6 @@ volatile unsigned long int pulse = 0;   // <---- volatile is important !!!
 unsigned long int red;       // variable to store the red pulse count
 unsigned long int blue;      // variable to store the blue pulse count
 unsigned long int green;     // variable to store the green pulse count
-//ADC pin configuration
-/*void adc_pin_config (void)
-{
-	DDRA = 0x00;   //set PORTF direction as input
-	PORTA = 0x00;  //set PORTF pins floating
-}*/
-
-//Function to Initialize ADC
-/*void adc_init()
-{
-	ADCSRA = 0x00;
-	ADMUX = 0x20;		//Vref=5V external --- ADLAR=1 --- MUX4:0 = 0000
-	ACSR = 0x80;
-	ADCSRA = 0x86;		//ADEN=1 --- ADIE=1 --- ADPS2:0 = 1 1 0
-}
-*/
-//This Function accepts the Channel Number and returns the corresponding Analog Value
-/*
-unsigned char ADC_Conversion(unsigned char Ch)
-{
-	unsigned char a;
-	Ch = Ch & 0x07;
-	ADMUX= 0x20| Ch;
-	ADCSRA = ADCSRA | 0x40;	//Set start conversion bit
-	while((ADCSRA&0x10)==0);	//Wait for ADC conversion to complete
-	a=ADCH;
-	ADCSRA = ADCSRA|0x10;      //clear ADIF (ADC Interrupt Flag) by writing 1 to it
-	return a;
-}
-*/
 
 void color_sensor_pin_config(void)
 {
@@ -168,55 +138,50 @@ void blue_read(void) // function to select blue filter and display the count gen
 	}
 }*/
 
-void colourDetect()
+void colourDetect() // make int
 {
 	/*Blue-->0
 	Red-->1
 	Green-->2*/
 	int colour;
-	color_sensor_pin_interrupt_init();
 	timer1_init2();
+	color_sensor_pin_interrupt_init();	
 	color_sensor_pin_config();
 	color_sensor_scaling();
-	red_read(); //display the pulse count when red filter is selected
-	green_read(); //display the pulse count when green filter is selected
-	blue_read(); //display the pulse count when blue filter is selected
+	
+		red_read(); //display the pulse count when red filter is selected
+		green_read(); //display the pulse count when green filter is selected
+		blue_read(); //display the pulse count when blue filter is selected	
+		
 	if((blue>green)&&(blue>red))
 	{
 		colour=0;
 		buzzer_on();
+		PORTC |= 0b00000001;
+		_delay_ms(1000);
+		PORTC &= 0b11111110;
+		
 	}
 	if((red>green)&&(red>blue))
 	{
 		colour=1;
 		buzzer_off();
+		PORTC |= 0b00000100;
+		_delay_ms(1000);
+		PORTC &= 0b11111011;
 	}
 	if((green>red)&&(green>blue))
 	{
 		colour=2;
 		buzzer_on();
+		PORTC |= 0b00000010;
 		_delay_ms(1000);
-		buzzer_off();
-		_delay_ms(1000);		
-	}/*
-	if(temp==0)
-	{
-		buzzer_on();
+		PORTC &= 0b11111101;
 	}
-	else if(temp==1)
-	{
-		buzzer_off();
-	}
-	else if(temp==2)
-	{
-		buzzer_on();
-		_delay_ms(1000);
-		buzzer_off();
-		_delay_ms(1000);
-	}*/
-	//return colour;
 }
-int plantDetect()
+
+
+int plantDetect(int flag)
 {
 	int val;
 	float volts;
@@ -225,8 +190,9 @@ int plantDetect()
 	val=ADC_Conversion(2);
 	volts=val*0.0196078431;
 	int distance = 13*pow(volts, -1);
-	if(distance<10)
+	if(distance<6 && flag == 0)
 		{
+			flag = 1;
 			return 1;
 		}
 	return 0; 

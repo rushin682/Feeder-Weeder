@@ -5,14 +5,16 @@
  *  Author: Eastways Travel
  */ 
 
+//For Red Spark
+
 #define F_CPU 7372800UL
 #include <avr/io.h>
 #include <avr/interrupt.h>
 #include <util/delay.h>
 #include <math.h> //included to support power function
 
-//#include "buzzer.h"
-#include "lcd.c"
+//#include "initializations.c"
+//#include "movements_config.c"
 #include "zigbee_comms.c"
 
 #include "Line_Follow.c"
@@ -29,18 +31,15 @@ char direction, face;
 int x_D = 0, y_D = 0;
 
 
-
-/*unsigned char ADC_Value;
-unsigned char Left_white_line = 0;
-unsigned char Center_white_line = 0;
-unsigned char Right_white_line = 0;*/
-
 int avg[3]={60,60,60}; //Used for thresholds
 int th[3]={0,0,0}; //Used for digital values of line eg 010 when center is on line
 int error=0,target=2,p=0,kp=40; //Constants for Proportional in p
 int highcount=0,highcurrent=0; //Constants for Proportional in p
 int baseLine=140; //Constants for Proportional in p
 
+int plant_number = 3;
+int toSend[3];
+//Buzzer Configurations
 void buzzer_pin_config (void)
 {
 	DDRC = DDRC | 0x08;		//Setting PORTC 3 as output
@@ -51,19 +50,62 @@ void buzzer_pin_config (void)
 {
 	PORTC = PORTC | 0b00001000;
 }
+
 void buzzer_off (void)
 {
 	PORTC = PORTC & 0b11110111;
 }*/
 
-//Function to configure ports to enable robot's motion
-void motion_pin_config (void)
+//Buzzer Ends
+
+
+//Line Follower 
+
+void readSensor()
 {
-	DDRB = DDRB | 0x0F;    //set direction of the PORTB3 to PORTB0 pins as output
-	PORTB = PORTB & 0xF0;  //set initial value of the PORTB3 to PORTB0 pins to logic 0
-	DDRD = DDRD | 0x30;    //Setting PD5 and PD4 pins as output for PWM generation
-	PORTD = PORTD | 0x30;  //PD5 and PD4 pins are for velocity control using PWM
+	highcurrent=0;
+	highcount=0;
+	sensor(0,th[0],avg[0]);
+	sensor(1,th[1],avg[1]);
+	sensor(2,th[2],avg[2]);
+	
+/*if(th[0] == 1){PORTC |= 0b00000001;}
+	else if(th[0] == 0){PORTC &= 0b11111110;}
+	if(th[1]==1){PORTC |= 0b00000010;}	
+	else if(th[1]==0){PORTC &= 0b11111101;}
+	if(th[2] == 1){PORTC |= 0b00000100;}
+	else if(th[2] == 1){PORTC &= 0b11111011;}*/
+	
 }
+void sensor(int n,int sn,int avgn)
+{
+	
+	sn=ADC_Conversion(n+3);
+	if(sn>=avgn)
+	{
+		th[n]=1;
+		highcount++;
+		highcurrent+=(n+1);
+	}
+	else if(sn<avgn)
+	{
+		th[n]=0;
+	}
+	//lcd_print(1, 3-n, th[n], 1);
+}
+void proportional()
+{
+	error = ((double)highcurrent/highcount)-target;
+	p=(kp*error);
+	if(th[0]==0 && th[1]==0 && th[2]==0)
+	{
+		p=0;
+	}
+}
+
+
+//Line Follower Ends
+
 
 void port_init()
 {
@@ -74,6 +116,17 @@ void port_init()
 	left_encoder_pin_config(); //left encoder pin config
 	right_encoder_pin_config(); //right encoder pin config
 }
+
+
+//Function to configure ports to enable robot's motion
+void motion_pin_config (void)
+{
+	DDRB = DDRB | 0x0F;    //set direction of the PORTB3 to PORTB0 pins as output
+	PORTB = PORTB & 0xF0;  //set initial value of the PORTB3 to PORTB0 pins to logic 0
+	DDRD = DDRD | 0x30;    //Setting PD5 and PD4 pins as output for PWM generation
+	PORTD = PORTD | 0x30;  //PD5 and PD4 pins are for velocity control using PWM
+}
+
 
 
 //Function used for setting motor's direction
@@ -88,7 +141,23 @@ void motion_set (unsigned char Direction)
 	PORTB = PortBRestore; 			// setting the command to the port
 }
 
+void init_devices (void)
+{
+	cli(); //Clears the global interrupts
+	port_init();
+	adc_init();
+	timer1_init();
+	uart0_init();
+	left_position_encoder_interrupt_init();
+	right_position_encoder_interrupt_init();
+	
+	uart0_init();
+	sei();   //Enables the global interrupts
+}
 
+
+
+//Movement Configs
 void forward (void) //both wheels forward
 {
 	motion_set(0x06);
@@ -134,9 +203,19 @@ void stop (void)
 	motion_set(0x00);
 }
 
+void forward_mm(unsigned int DistanceInMM, char purpose)
+{
+	
+	linear_distance_mm(DistanceInMM, 1, purpose);
+}
+
+void back_mm(unsigned int DistanceInMM, char purpose)
+{
+	linear_distance_mm(DistanceInMM, -1, purpose);
+}
+
 
 //Function used for moving robot forward by specified distance
-
 void linear_distance_mm(unsigned int DistanceInMM, int sign, char purpose)
 {
 	float ReqdShaftCount = 0;
@@ -152,24 +231,33 @@ void linear_distance_mm(unsigned int DistanceInMM, int sign, char purpose)
 		proportional();	
 		
 		if(sign > 0){forward();}
-		else if(sign < 0){ back();}	
-			
-		velocity(baseLine+p,baseLine-p);		
-		//plant_trigger = plantDetect();
-		/*if(plant_trigger == 1){
-			stop();
+		else if(sign < 0){ back();}		
+		velocity(baseLine+p,baseLine-p);	
+		plant_trigger = plantDetect(0);
+		if(plant_trigger == 1){
+			velocity(0, 0);
 			pendingShaftCount = ReqdShaftCountInt - ShaftCountRight;
-			if(purpose == 'S'){ 				
-				colourDetect();
-				timer1_init();
+			if(purpose == 'S'){ 	
+				buzzer_on();	
+				_delay_ms(1000);
+				buzzer_off();
+				forward();
+				_delay_ms(2000);		
+				//colourDetect();
+				int color = 1, current_X, current_Y;
+				if(color != 1){
+					current_X = x_D - ((ShaftCountRight * 12.92)/340);
+					current_Y = y_D;
+					update(color, current_X, current_Y, face);
+				}				
+				//timer1_init();
 			}
 			else if(purpose == 'W'){
-				stop();
 				buzzer_on();
 				_delay_ms(3000);
 				//servoAction();				
 			} 
-		}*/
+		}
 		if(ShaftCountRight > ReqdShaftCountInt)
 		{
 			break; 
@@ -178,58 +266,11 @@ void linear_distance_mm(unsigned int DistanceInMM, int sign, char purpose)
 	stop(); //Stop robot
 }
 
-void readSensor()
-{
-	highcurrent=0;
-	highcount=0;
-	sensor(0,th[0],avg[0]);
-	sensor(1,th[1],avg[1]);
-	sensor(2,th[2],avg[2]);
-	
-	if(th[0] == 1){PORTC |= 0b00000001;}
-	else if(th[0] == 0){PORTC &= 0b11111110;}
-	if(th[1]==1){PORTC |= 0b00000010;}	
-	else if(th[1]==0){PORTC &= 0b11111101;}
-	if(th[2] == 1){PORTC |= 0b00000100;}
-	else if(th[2] == 1){PORTC &= 0b11111011;}
-	
-}
-void sensor(int n,int sn,int avgn)
-{
-	
-	sn=ADC_Conversion(n+3);
-	if(sn>=avgn)
-	{
-		th[n]=1;
-		highcount++;
-		highcurrent+=(n+1);
-	}
-	else if(sn<avgn)
-	{
-		th[n]=0;
-	}
-	//lcd_print(1, 3-n, th[n], 1);
-}
-void proportional()
-{
-	error = ((double)highcurrent/highcount)-target;
-	p=(kp*error);
-	if(th[0]==0 && th[1]==0 && th[2]==0)
-	{
-		p=0;
-	}
-}
 
-void forward_mm(unsigned int DistanceInMM, char purpose)
-{
-	
-	linear_distance_mm(DistanceInMM, 1, purpose);
-}
+//Movement Ends
 
-void back_mm(unsigned int DistanceInMM, char purpose)
-{
-	linear_distance_mm(DistanceInMM, -1, purpose);
-}
+//Rotation Configs
+
 
 void left_degrees(unsigned int Degrees)
 {
@@ -281,12 +322,14 @@ void soft_right_2_degrees(unsigned int Degrees)
 }
 
 
+
+//Rotation Ends
+
+
+
 void manoeuvre(int x_F, int y_F,char dir_F){
 	int x_origin = 4;
-	int y_origin = 'D';
-	
-	
-	
+	int y_origin = 'D';	
 	
 	int x_middle = x_F - x_origin;
 	int y_middle = y_F - y_origin;
@@ -307,17 +350,6 @@ void manoeuvre(int x_F, int y_F,char dir_F){
 	horizontal = y_middle - y_intermediate;
 	direction = dir_F;	
 }
-
-/*void print_value()
-{
-	lcd_set_4bit();
-	lcd_cursor(1, 3);
-	lcd_string("Vert");	
-	lcd_print(1,8, vertical, 3);
-	lcd_cursor(2, 1);
-	lcd_string("horiz");
-	lcd_print(2,8, horizontal, 3);
-}*/
 
 void rotate(char face){
 	switch(direction){
@@ -360,10 +392,8 @@ void vertical_motion(){
 	direction = face;	
 	vertical = abs(vertical);
 	//lcd_print(1,3, vertical, 3);
-	DDRC|= 0b00000111;
 	
-	
-	forward_mm(vertical * 340, 'S');
+	forward_mm(vertical * 340, 'R');
 	
 }
 void horizontal_motion(){
@@ -377,7 +407,7 @@ void horizontal_motion(){
 	rotate(face);
 	direction = face;
 	horizontal = abs(horizontal);
-	forward_mm(horizontal * 340, 'S');
+	forward_mm(horizontal * 340, 'R');
 }
 
 
@@ -396,97 +426,69 @@ void scan(int nodes){
 		_delay_ms(1000);
 		forward_mm(((nodes-1) * 340), 'S');
 		_delay_ms(1000);
-		
-		
-		//right_degrees(180);
+		if(ReceivedByte == 'E'){
+		transmit_findings(toSend);
+		}		
 	}
-	
-	
-	/*buzzer_on();
-	_delay_ms(1000);
-	buzzer_off();*/
 			
 }
 
 transmit(int grid_number){
-	char v = (device_id*100)+grid_number;
-	USART_Transmit(v);
+	//char v = (device_id*100)+grid_number;
+	USART_Transmit(grid_number);
 }
 
-void init_devices (void)
-{
-	cli(); //Clears the global interrupts
-	port_init();
-	adc_init();
-	timer1_init();
-	left_position_encoder_interrupt_init();
-	right_position_encoder_interrupt_init();
-	
-	uart0_init();
-	sei();   //Enables the global interrupts
+
+void transmit_findings(int array[]){
+	transmit(65);
+	for (int i=0;i<sizeof(array);i++){
+		transmit(array[i]);
+	}
+	transmit(69);
 }
 
+
+
+void update(int color, int current_X, char current_Y, char current_Direction){
+	int r = 0, g = 1, b = 2;
+	int block;
+	if(current_Direction = 'N'){
+		current_X--;
+	}
+	block = ((current_X - 1)*6)+((int)current_Y - 64);
+	global_array[block - 1] = color;
+	if(plant_number>0){		
+		toSend[--plant_number] = (color * 100) + block;
+	}
+}
 
 int main(void)
 {	
 	
-	//lcd_port_config();
-	init_devices();
-	//lcd_set_4bit();	
-	//lcd_init();	
-	
-	
-	/*PORTC|=0b00000111;
-	_delay_ms(2000);
-	PORTC&=0b11111000;
-	forward();*/
-	
+	init_devices();		
 	
 	//Enter the co-ordinates of the initial positions of all the three bots.
 	//Fx,Fy for Firebird | Sbx,Sby for Spark blue | Srx,Sry for Spark Red
 		int x_F = 3;
 		int y_F = 'C';
 		char dir_F = 'E';
-	
-	
-		
-	
-		/*buzzer_on();
-		_delay_ms(1000);		//delay
-		buzzer_off();*/
-		
 		
 		//This function will set the nodes to travel in the vertical & horizontal direction for the bot to reach its standard spot
 		manoeuvre(x_F, y_F, dir_F);	
 		
-		//print_value();
-		//_delay_ms(5000);		
-		//lcd_wr_command(0x01);
-		//_delay_ms(1000);
-		
 		//int grid_number = (vertical-1)*7) + (horizontal-64);
 		//transmit(grid_number);
 		
-		
-		
-		/*while(1){
-			readSensor();			
-			proportional();
-			velocity(baseLine+p,baseLine-p);
-		}*/			
-				
 		vertical_motion();
 		stop();
 		_delay_ms(1000);
 		horizontal_motion();
 		_delay_ms(1000);
 		
-		//right_degrees(180);
-		//_delay_ms(500);
-		
-		
 		scan(STOPS);	
 		stop();
 		
 		
+		
+		return 0;
 }
